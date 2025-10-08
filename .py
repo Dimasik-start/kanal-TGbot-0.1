@@ -11,7 +11,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Словарь для хранения ID групп для уведомлений
-# В реальном приложении лучше использовать базу данных
 group_chats = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -20,7 +19,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 Бот для отслеживания подписок на канал\n\n"
         "Команды:\n"
         "/set_group - установить группу для уведомлений\n"
-        "/info - информация о текущих настройках"
+        "/info - информация о текущих настройках\n\n"
+        "⚠️ Важно: Бот должен быть администратором в канале!"
     )
 
 async def set_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -40,6 +40,7 @@ async def set_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"ID группы: {chat_id}\n"
         f"Теперь бот будет отправлять сюда уведомления о подписках/отписках."
     )
+    logger.info(f"Group set for notifications: {chat_id}")
 
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /info"""
@@ -52,16 +53,28 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def track_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик изменений в участниках канала"""
     try:
+        logger.info(f"Received chat member update: {update}")
+        
         # Получаем информацию об изменении
         chat_member = update.chat_member
+        if not chat_member:
+            logger.error("No chat_member in update")
+            return
+            
         old_chat_member = chat_member.old_chat_member
         new_chat_member = chat_member.new_chat_member
         
         user = chat_member.from_user
         chat = chat_member.chat
         
+        logger.info(f"Chat: {chat.title} (ID: {chat.id}, Type: {chat.type})")
+        logger.info(f"User: {user.first_name} (ID: {user.id})")
+        logger.info(f"Old status: {old_chat_member.status}")
+        logger.info(f"New status: {new_chat_member.status}")
+        
         # Проверяем, что это канал
         if chat.type != 'channel':
+            logger.info(f"Not a channel, skipping. Chat type: {chat.type}")
             return
         
         # Получаем статусы пользователя
@@ -80,21 +93,19 @@ async def track_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Отправляем уведомления во все настроенные группы
         for group_id in group_chats.values():
             try:
-                if old_status in ['left', 'kicked'] and new_status == 'member':
+                if old_status in ['left', 'kicked', 'restricted'] and new_status in ['member', 'administrator']:
                     # Новый подписчик
-                    await context.bot.send_message(
-                        chat_id=group_id,
-                        text=f"✅ {user_display} подписался на канал"
-                    )
-                    logger.info(f"New subscriber: {user_display}")
+                    message = f"✅ {user_display} подписался на канал"
+                    await context.bot.send_message(chat_id=group_id, text=message)
+                    logger.info(f"Sent subscription notification: {message}")
                 
-                elif old_status == 'member' and new_status in ['left', 'kicked']:
+                elif old_status in ['member', 'administrator'] and new_status in ['left', 'kicked', 'restricted']:
                     # Пользователь отписался
-                    await context.bot.send_message(
-                        chat_id=group_id,
-                        text=f"❌ {user_display} отписался от канала"
-                    )
-                    logger.info(f"Unsubscribed: {user_display}")
+                    message = f"❌ {user_display} отписался от канала"
+                    await context.bot.send_message(chat_id=group_id, text=message)
+                    logger.info(f"Sent unsubscription notification: {message}")
+                else:
+                    logger.info(f"No relevant status change: {old_status} -> {new_status}")
                     
             except Exception as e:
                 logger.error(f"Error sending message to group {group_id}: {e}")
@@ -119,11 +130,12 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("set_group", set_group))
     application.add_handler(CommandHandler("info", info))
-    application.add_handler(ChatMemberHandler(track_chat_members))
+    application.add_handler(ChatMemberHandler(track_chat_members, ChatMemberHandler.CHAT_MEMBER))
     
     # Запускаем бота
     print("🤖 Бот запущен...")
-    application.run_polling()
+    logger.info("Bot started")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
