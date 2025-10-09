@@ -1,7 +1,7 @@
 import os
 import logging
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, ChatMemberHandler
+from telegram.ext import Updater, CommandHandler, CallbackContext, ChatMemberHandler
 
 # Настройка логирования
 logging.basicConfig(
@@ -13,12 +13,9 @@ logger = logging.getLogger(__name__)
 # ID группы для уведомлений
 NOTIFICATION_GROUP = None
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     """Обработчик команды /start"""
-    if update.message is None:
-        return
-        
-    await update.message.reply_text(
+    update.message.reply_text(
         "📊 Трекер Подписчиков - отслеживание подписок и отписок\n\n"
         "Как настроить:\n"
         "1. Добавить бота в КАНАЛ как администратора\n"
@@ -27,25 +24,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "4. Отправить /set_group в группе"
     )
 
-async def set_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def set_group(update: Update, context: CallbackContext):
     """Установка группы для уведомлений"""
     global NOTIFICATION_GROUP
-    
-    if update.message is None or update.effective_chat is None:
-        return
-        
     chat_id = update.effective_chat.id
     chat_type = update.effective_chat.type
     
     if chat_type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ Используйте эту команду в группе!")
+        update.message.reply_text("❌ Используйте эту команду в группе!")
         return
     
     NOTIFICATION_GROUP = chat_id
-    await update.message.reply_text(f"✅ Группа настроена! ID: {chat_id}")
+    update.message.reply_text(f"✅ Группа настроена! ID: {chat_id}")
     logger.info(f"Группа для уведомлений установлена: {chat_id}")
 
-async def handle_member_changes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def handle_member_changes(update: Update, context: CallbackContext):
     """Обработчик подписок/отписок"""
     global NOTIFICATION_GROUP
     
@@ -54,14 +47,6 @@ async def handle_member_changes(update: Update, context: ContextTypes.DEFAULT_TY
             return
             
         change = update.chat_member
-        
-        # Проверяем необходимые атрибуты
-        if (change.old_chat_member is None or 
-            change.new_chat_member is None or 
-            change.from_user is None or 
-            change.chat is None):
-            return
-            
         old_status = change.old_chat_member.status
         new_status = change.new_chat_member.status
         user = change.from_user
@@ -84,13 +69,13 @@ async def handle_member_changes(update: Update, context: ContextTypes.DEFAULT_TY
             # Новая подписка
             if old_status in ['left', 'kicked'] and new_status == 'member':
                 message = f"✅ {name} подписался на канал"
-                await context.bot.send_message(NOTIFICATION_GROUP, message)
+                context.bot.send_message(NOTIFICATION_GROUP, message)
                 logger.info(f"Отправлено: {message}")
             
             # Отписка
             elif old_status == 'member' and new_status in ['left', 'kicked']:
                 message = f"❌ {name} отписался от канала"
-                await context.bot.send_message(NOTIFICATION_GROUP, message)
+                context.bot.send_message(NOTIFICATION_GROUP, message)
                 logger.info(f"Отправлено: {message}")
         
     except Exception as e:
@@ -101,26 +86,26 @@ def main():
     token = os.getenv('BOT_TOKEN')
     
     if not token:
-        logger.error("❌ BOT_TOKEN не установлен!")
-        print("❌ Установите BOT_TOKEN в переменные окружения!")
+        logger.error("❌ ОШИБКА: Установите BOT_TOKEN в переменные окружения!")
         return
         
-    # Создаем приложение
-    app = Application.builder().token(token).build()
+    # Используем Updater вместо Application для версии 13.x
+    updater = Updater(token, use_context=True)
     
-    # Добавляем обработчики
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("set_group", set_group))
-    app.add_handler(ChatMemberHandler(handle_member_changes, ChatMemberHandler.CHAT_MEMBER))
+    # Получаем диспетчер для регистрации обработчиков
+    dp = updater.dispatcher
     
-    logger.info("✅ Бот запущен и готов к работе!")
-    print("🤖 Бот запущен на Render!")
+    # Регистрируем обработчики
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("set_group", set_group))
+    dp.add_handler(ChatMemberHandler(handle_member_changes))
     
     # Запускаем бота
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True
-    )
+    logger.info("✅ Бот запущен и готов к работе!")
+    print("🤖 Бот запущен! Ожидаю обновления...")
+    
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
     main()
